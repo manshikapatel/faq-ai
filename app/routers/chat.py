@@ -1,69 +1,75 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 from app.schemas.chat import ChatRequest, ChatResponse
-from app.db.session import SessionLocal
+from app.db.session import AsyncSessionLocal
 from app.db import models
 from app.services.llm import chat_llm
-from app.services.retriever import vectorstore, search_similar
-from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
+from app.services.retriever import vectorstore
+from langchain.chains import ConversationalRetrievalChain
+from langchain.memory import ConversationBufferMemory
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
-# Simple DB session dependency
 
-def get_db():
-    db = SessionLocal()
-    try:
+# ✅ Async DB dependency
+async def get_db():
+    async with AsyncSessionLocal() as db:
         yield db
-    finally:
-        db.close()
 
-# Custom RAG prompt
-prompt = PromptTemplate.from_template(
-    """
-You are a helpful FAQ assistant. Use ONLY the provided context to answer.
-If the answer is not in the context, say you don't know.
-
-Question: {question}
-
-Context:
-{context}
-
-Answer:
-"""
-)
 
 @router.post("", response_model=ChatResponse)
-def chat(req: ChatRequest, db: Session = Depends(get_db)):
+async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
+    # 1️⃣ Retrieve last few chats for this user
+    result = await db.execute(
+        select(models.ChatHistory)
+        .filter(models.ChatHistory.user_id == req.user_id)
+        .order_by(models.ChatHistory.id.desc())
+        .limit(5)
+    )
+    past_chats = result.scalars().all()
+
+    # 2️⃣ Build memory object (conversation buffer)
+    memory = ConversationBufferMemory(
+        memory_key="chat_history",
+        return_messages=True
+    )
+
+    for c in reversed(past_chats):
+        memory.chat_memory.add_user_message(c.question)
+        memory.chat_memory.add_ai_message(c.answer)
+
+    # 3️⃣ Create retriever (for document-based context)
     retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
-    chain = RetrievalQA.from_chain_type(
+
+    # 4️⃣ Build conversational retrieval chain
+    chain = ConversationalRetrievalChain.from_llm(
         llm=chat_llm,
         retriever=retriever,
-        chain_type="stuff",
-        chain_type_kwargs={"prompt": prompt},
+        memory=memory,
         return_source_documents=True,
     )
 
-    # result = chain.invoke({"query": req.question})
-    result = chain.run(req.question)  # simpler, returns answer string
-    source_docs = retriever.get_relevant_documents(req.question)  # get sources separately
+    # 5️⃣ Ask question with memory + retrieval
+    result = chain.invoke({"question": req.question})
 
-    # Persist chat
-    db.add(models.ChatHistory(
+    # 6️⃣ Save new chat in DB
+    new_chat = models.ChatHistory(
         user_id=req.user_id,
         question=req.question,
-        answer=result["result"],
-    ))
-    db.commit()
-    '''
+        answer=result.get("answer", "No response generated."),
+    )
+    db.add(new_chat)
+    await db.commit()
+
+    # 7️⃣ Collect document sources
     sources = []
     for d in result.get("source_documents", []):
         src = d.metadata.get("source")
         if src and src not in sources:
             sources.append(src)
-'''
-    sources = list({d.metadata.get("source") for d in source_docs if d.metadata.get("source")})
 
-
-    return ChatResponse(answer=result["result"], sources=sources)
+    return ChatResponse(
+        answer=result.get("answer", "No answer generated."),
+        sources=sources,
+    )
