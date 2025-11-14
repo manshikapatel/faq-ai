@@ -1,7 +1,7 @@
 
 # ingest/ingest_documents.py
 from pathlib import Path
-from app.services.retriever import vectorstore, ensure_collection
+from app.services.retriever import vectorstore, ensure_collection,reset_collection 
 from app.services.llm import embeddings
 from langchain_community.document_loaders import PyPDFLoader, UnstructuredMarkdownLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -31,19 +31,30 @@ def load_docs(data_dir: Path):
 
 
 def chunk_docs(docs):
-    splitter = RecursiveCharacterTextSplitter(chunk_size=100, chunk_overlap=50)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
     chunks = splitter.split_documents(docs)
     
     # Debug: Show first 3 chunks
     for i, chunk in enumerate(chunks[:3]):
         print(f"Chunk {i+1}: {chunk.page_content[:100]}...\n")
+    
+    # Debug: Show last 5 chunks
+    print("----LAST 5 CHUNKS----")
+    for c in chunks[-5:]:
+        print(c.page_content[:500])  # first 500 characters of each chunk
+        print("------")
+    
     return chunks
 
 
 
 def main():
+    print("🧹 Resetting collection to prevent duplicates...")
+    reset_collection()  # ✅ this clears old vectors and recreates the collection
+    '''
     print("Ensuring collection exists...")
     ensure_collection()
+    '''
     data_dir = Path("data")  # folder where PDFs/MD files are stored
     docs = load_docs(data_dir)
     print(f" Loaded {len(docs)} documents")

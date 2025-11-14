@@ -6,11 +6,34 @@ from app.core.config import settings
 from app.services.llm import embeddings
 from dotenv import load_dotenv
 
+
 load_dotenv()
 
-_client = QdrantClient(host="localhost", port=6333)
+_client = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+# Determine embedding vector size automatically based on the model used
+# text-embedding-3-large → 3072 dimensions
+# text-embedding-3-small → 1536 dimensions
+if "large" in settings.openai_embed_model:
+    EMBEDDING_DIM = 3072
+elif "small" in settings.openai_embed_model:
+    EMBEDDING_DIM = 1536
+else:
+    EMBEDDING_DIM = 384  # default for MiniLM
 
-def ensure_collection(collection_name: str = settings.qdrant_collection, vector_size: int = 384):
+
+# 🧹 Use this when you want to clear duplicates and start fresh (for ingestion)
+def reset_collection(collection_name: str = settings.qdrant_collection, vector_size: int = EMBEDDING_DIM):
+    existing = [c.name for c in _client.get_collections().collections]
+    if collection_name in existing:
+        print(f"Deleting existing collection: {collection_name}")
+        _client.delete_collection(collection_name=collection_name)
+    print(f"Creating fresh collection: {collection_name}")
+    _client.create_collection(
+        collection_name=collection_name,
+        vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE)
+    )
+    
+def ensure_collection(collection_name: str = settings.qdrant_collection, vector_size: int = EMBEDDING_DIM):
     existing = [c.name for c in _client.get_collections().collections]
     if collection_name not in existing:
         print(f"Creating collection: {collection_name}")
