@@ -40,7 +40,78 @@ async def safe_invoke_chain(chain, question, max_retries=5):
             print(f"OpenAI error: {e}")
             break
     return None
+# -------------------------------
+# 3️⃣ Reusable chat logic
+# -------------------------------
+async def process_chat(user_id: str, question: str, db: AsyncSession):
+    # Load last 5 messages
+    result = await db.execute(
+        select(models.ChatHistory)
+        .filter(models.ChatHistory.user_id == user_id)
+        .order_by(models.ChatHistory.id.desc())
+        .limit(10)
+    )
+    past_chats = result.scalars().all()
 
+    memory = ConversationBufferMemory(
+        memory_key="chat_history",
+        return_messages=True,
+        output_key="answer",
+    )
+
+    for c in reversed(past_chats):
+        memory.chat_memory.add_user_message(c.question)
+        memory.chat_memory.add_ai_message(c.answer)
+
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+
+    chain = ConversationalRetrievalChain.from_llm(
+        llm=chat_llm,
+        retriever=retriever,
+        memory=memory,
+        return_source_documents=True,
+        output_key="answer",
+    )
+
+    result_data = await safe_invoke_chain(chain, question)
+
+    # fallback to GPT-3.5
+    if result_data is None:
+        fallback_chain = ConversationalRetrievalChain.from_llm(
+            llm=fallback_chat_llm,
+            retriever=retriever,
+            memory=memory.copy(),
+            return_source_documents=True,
+            output_key="answer",
+        )
+        result_data = await safe_invoke_chain(fallback_chain, question)
+        if result_data is None:
+            return ChatResponse(answer="Failed to generate response due to rate limits.", sources=[])
+
+    try:
+        answer_text = result_data.get("answer", "")
+        source_docs = result_data.get("source_documents", [])
+    except Exception:
+        answer_text = str(result_data)
+        source_docs = []
+
+    # Save to DB
+    new_chat = models.ChatHistory(
+        user_id=user_id,
+        question=question,
+        answer=answer_text,
+    )
+    db.add(new_chat)
+    await db.commit()
+
+    sources = []
+    for d in source_docs:
+        src = d.metadata.get("source")
+        if src and src not in sources:
+            sources.append(src)
+
+    return ChatResponse(answer=answer_text, sources=sources)
+'''
 # -------------------------------
 # 3️⃣ Chat Endpoint
 # -------------------------------
@@ -137,3 +208,11 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         answer=answer_text,
         sources=sources,
     )
+'''
+# -------------------------------
+# 4️⃣ Existing chat endpoint
+# -------------------------------
+@router.post("", response_model=ChatResponse)
+async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
+    user_id = str(req.user_id)
+    return await process_chat(user_id, req.question, db)

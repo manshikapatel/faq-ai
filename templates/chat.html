@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Chatbot UI</title>
+    <style>
+      body {
+        margin: 0;
+        height: 100vh;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background: linear-gradient(135deg, #1f1c2c, #928dab);
+        font-family: "Poppins", sans-serif;
+      }
+      .chat-container {
+        width: 450px;
+        height: 650px;
+        background: #ffffff;
+        border-radius: 18px;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .header {
+        padding: 18px;
+        text-align: center;
+        background: #4b3f72;
+        color: white;
+        font-size: 20px;
+        font-weight: bold;
+      }
+      #chatBox {
+        flex: 1;
+        padding: 14px;
+        overflow-y: auto;
+        background: #f7f7fb;
+      }
+      .message {
+        max-width: 80%;
+        padding: 10px 14px;
+        margin: 10px 0;
+        border-radius: 10px;
+        animation: fadeIn 0.2s ease-in-out;
+      }
+      .user {
+        background: #4b3f72;
+        color: #fff;
+        margin-left: auto;
+        border-bottom-right-radius: 0;
+      }
+      .bot {
+        background: #ded9f4;
+        color: #333;
+        margin-right: auto;
+        border-bottom-left-radius: 0;
+      }
+      .input-area {
+        display: flex;
+        padding: 12px;
+        background: #eee;
+      }
+      #userInput {
+        flex: 1;
+        padding: 12px;
+        border: none;
+        border-radius: 10px;
+        outline: none;
+        font-size: 15px;
+      }
+      button {
+        padding: 12px 18px;
+        margin-left: 8px;
+        border: none;
+        border-radius: 10px;
+        cursor: pointer;
+        background: #4b3f72;
+        color: white;
+        font-weight: 600;
+      }
+      button:hover {
+        background: #3a315b;
+      }
+      .clear-btn {
+        background: #d9534f;
+      }
+
+      .clear-btn:hover {
+        background: #b52b27;
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      /* File upload section */
+      .upload-section {
+        padding: 15px;
+        background: #fafafa;
+        border-top: 1px solid #ddd;
+        text-align: center;
+      }
+
+      .upload-section h3 {
+        margin-top: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="chat-container">
+      <div class="header">AI Chatbot</div>
+      <!-- Chat Box -->
+      <div id="chatBox">
+        {% for msg in chat_history %}
+        <div
+          class="message {% if msg.sender == 'You' %}user{% else %}bot{% endif %}"
+        >
+          <b>{{ msg.sender }}:</b> {{ msg.message }}
+        </div>
+        {% endfor %}
+      </div>
+
+      <!-- Input and Buttons -->
+      <div class="input-area">
+        <input
+          type="text"
+          id="userInput"
+          placeholder="Type a message"
+          onkeydown="if(event.key==='Enter'){sendMessage();}"
+        />
+
+        <button onclick="sendMessage()">Send</button>
+        <button class="clear-btn" onclick="clearChat()">Clear</button>
+      </div>
+      <!-- File Upload Section -->
+      <div class="upload-section">
+        <h3>Upload File (PDF/MD)</h3>
+        <input type="file" id="fileInput" />
+        <button onclick="uploadFile()">Upload</button>
+      </div>
+    </div>
+
+    <script>
+      async function sendMessage() {
+        let input = document.getElementById("userInput").value;
+        if (input.trim() === "") return;
+
+        const chatBox = document.getElementById("chatBox");
+
+        chatBox.innerHTML += `<div class="message user"><b>You:</b> ${input}</div>`;
+
+        const response = await fetch("/chat-ui-message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: input }),
+        });
+
+        const data = await response.json();
+
+        chatBox.innerHTML += `<div class="message bot"><b>Bot:</b> ${data.reply}</div>`;
+        chatBox.scrollTop = chatBox.scrollHeight;
+
+        document.getElementById("userInput").value = "";
+      }
+
+      async function clearChat() {
+        // Clear UI chat
+        document.getElementById("chatBox").innerHTML = "";
+
+        // Notify backend to clear chat session
+        await fetch("/chat-ui-clear", { method: "POST" });
+      }
+
+      async function uploadFile() {
+        const fileInput = document.getElementById("fileInput");
+        if (!fileInput.files.length) {
+          alert("Please select a file!");
+          return;
+        }
+
+        const file = fileInput.files[0];
+        const formData = new FormData();
+        formData.append("file", file);
+
+        const response = await fetch("/upload/", {
+          method: "POST",
+          body: formData,
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          alert(
+            `File uploaded: ${data.filename}\nChunks added: ${data.chunks_added}`
+          );
+        } else {
+          alert(`Error: ${data.detail || "Upload failed"}`);
+        }
+
+        fileInput.value = "";
+      }
+    </script>
+  </body>
+</html>

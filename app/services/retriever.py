@@ -55,6 +55,6 @@ vectorstore = QdrantVectorStore(
 
 print("Number of vectors in collection:", _client.count(settings.qdrant_collection).count)
 
-def search_similar(query: str, k: int = 4) -> List[dict]:
+def search_similar(query: str, k: int = 10) -> List[dict]:
     docs = vectorstore.similarity_search(query, k=k)
     return [{"page_content": d.page_content, "source": d.metadata.get("source")} for d in docs]
